@@ -2,6 +2,7 @@ package detector
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/free5gc/http_wrapper"
 	"github.com/free5gc/openapi/models"
@@ -10,9 +11,13 @@ import (
 )
 
 const (
-	ERR_MANDATORY_ABSENT = "Mandatory type is absent"
-	ERR_MISS_CONDITION   = "Miss condition"
-	ERR_VALUE_INCORRECT  = "Unexpected value is received"
+	ERR_MANDATORY_ABSENT = "mandatory type is absent"
+	ERR_MISS_CONDITION   = "missing conditions"
+	ERR_VALUE_INCORRECT  = "unexpected value is received"
+
+	ausfURI = "http://127.0.0.9:8000"
+	udmURI  = "http://127.0.0.3:8000"
+	udrURI  = "http://127.0.0.4:8000"
 )
 
 func HandleAuth5gAkaComfirmRequest(request *http_wrapper.Request) *http_wrapper.Response {
@@ -22,8 +27,7 @@ func HandleAuth5gAkaComfirmRequest(request *http_wrapper.Request) *http_wrapper.
 
 	// NOTE: The request from AMF is guaranteed to be correct
 
-	// TODO: Send request to target NF by setting correct uri
-	targetNfUri := ""
+	targetNfUri := ausfURI
 
 	response, problemDetails, err := consumer.SendAuth5gAkaConfirmRequest(targetNfUri, ConfirmationDataResponseID, &updateConfirmationData)
 
@@ -47,9 +51,18 @@ func HandleUeAuthPostRequest(request *http_wrapper.Request) *http_wrapper.Respon
 	updateAuthenticationInfo := request.Body.(models.AuthenticationInfo)
 
 	// NOTE: The request from AMF is guaranteed to be correct
+	CurrentAuthProcedure.SupiOrSuci = updateAuthenticationInfo.SupiOrSuci
+	CurrentAuthProcedure.ServingNetworkName = updateAuthenticationInfo.ServingNetworkName
+	CurrentAuthProcedure.Supi = ""
+	if strings.HasPrefix(updateAuthenticationInfo.SupiOrSuci, "suci-") {
+		if supi, err := extractSupi(updateAuthenticationInfo.SupiOrSuci); err == nil {
+			CurrentAuthProcedure.Supi = supi
+		}
+	} else {
+		CurrentAuthProcedure.Supi = updateAuthenticationInfo.SupiOrSuci
+	}
 
-	// TODO: Send request to target NF by setting correct uri
-	targetNfUri := ""
+	targetNfUri := ausfURI
 
 	response, respHeader, problemDetails, err := consumer.SendUeAuthPostRequest(targetNfUri, &updateAuthenticationInfo)
 
@@ -76,8 +89,7 @@ func HandleGenerateAuthDataRequest(request *http_wrapper.Request) *http_wrapper.
 
 	// TODO: Check IEs in request body is correct
 
-	// TODO: Send request to target NF by setting correct uri
-	targetNfUri := ""
+	targetNfUri := udmURI
 
 	response, problemDetails, err := consumer.SendGenerateAuthDataRequest(targetNfUri, supiOrSuci, &authInfoRequest)
 	xres, sqnXorAk, ck, ik, autn := retrieveBasicDeriveFactor(&CurrentAuthProcedure.AuthSubsData, response.AuthenticationVector.Rand)
@@ -103,13 +115,17 @@ func HandleQueryAuthSubsData(request *http_wrapper.Request) *http_wrapper.Respon
 
 	ueId := request.Params["ueId"]
 
-	// TODO: Send request to correct NF by setting correct uri
-	targetNfUri := ""
+	targetNfUri := udrURI
 
 	response, problemDetails, err := consumer.SendAuthSubsDataGet(targetNfUri, ueId)
 
 	// NOTE: The response from UDR is guaranteed to be correct
-	CurrentAuthProcedure.AuthSubsData = *response
+	if response != nil {
+		CurrentAuthProcedure.AuthSubsData = *response
+		if CurrentAuthProcedure.Supi == "" {
+			CurrentAuthProcedure.Supi = ueId
+		}
+	}
 
 	if response != nil {
 		return http_wrapper.NewResponse(http.StatusOK, nil, response)
